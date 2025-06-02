@@ -1,16 +1,19 @@
+# ui/streamlit_app.py
+# AI Journal App – Streamlit UI
+
 import sys
 import os
+
+# Add root directory to path so app.* modules can be imported from ui/
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import json
 import streamlit as st
-import pandas as pd
 from datetime import datetime
-from dateutil import parser
-
+import pandas as pd
 from app.analyzer import analyze_entry
 from app.storage import save_entry
 from app.visualizations import plot_emotion_timeline, plot_theme_frequency
-
-sys.path.append("/Users/Additional Storage/ML Projects/Journal app")
 
 st.set_page_config(page_title="AI Journal", layout="centered")
 st.title("📝 AI-Powered Journal")
@@ -75,6 +78,12 @@ st.markdown("""
         margin-bottom: 0.2rem;
         text-transform: capitalize;
     }
+    .stDateInput input {
+        position: relative;
+    }
+    .stDateInput input[data-highlight='true'] {
+        border: 2px solid red !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -83,6 +92,7 @@ tabs = st.tabs(["✍️ Add Entry", "📖 Browse Entries", "📊 Visual Insights
 # -------------------- ✍️ ADD ENTRY --------------------
 with tabs[0]:
     st.header("New Journal Entry")
+
     date = st.date_input("Date", value=datetime.now().date())
     time = st.time_input("Time", value=datetime.now().time())
     text = st.text_area("What’s on your mind?", height=180)
@@ -113,28 +123,31 @@ with tabs[1]:
         if entries:
             entries.sort(key=lambda x: x["timestamp"], reverse=True)
 
-            available_dates = sorted(list(set(e["timestamp"].split("T")[0] for e in entries)))
-            date_options = [datetime.strptime(d, "%Y-%m-%d").strftime("%d-%b-%Y") for d in available_dates]
+            # Extract available dates only
+            available_dates = sorted(list(set([e["timestamp"].split("T")[0] for e in entries])))
+            available_dates_dt = [datetime.strptime(d, "%Y-%m-%d").date() for d in available_dates]
+            selected_date = st.selectbox("Choose a date with an entry:", available_dates_dt)
 
-            col_date, col_time = st.columns([1, 1])
-            with col_date:
-                selected_date_str = st.selectbox("Filter by date:", date_options)
-                selected_date = datetime.strptime(selected_date_str, "%d-%b-%Y").date()
+            matching_entries = [e for e in entries if e["timestamp"].startswith(selected_date.isoformat())]
+            time_options = []
+            for e in matching_entries:
+                try:
+                    dt = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%S.%f")
+                except ValueError:
+                    dt = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%S")
+                time_options.append(dt.strftime("%H:%M"))
 
-            with col_time:
-                matching_entries = [e for e in entries if e["timestamp"].startswith(selected_date.isoformat())]
-                time_options = [
-                    parser.parse(e["timestamp"]).strftime("%H:%M")
-
-                    for e in matching_entries
-                ]
-                selected_time = st.selectbox("Select time:", time_options) if time_options else None
+            selected_time = st.selectbox("Select time:", time_options) if time_options else None
 
             if selected_time:
-                selected = next(e for e in matching_entries if selected_time in e["timestamp"])
+                selected = next(
+                    e for e in matching_entries
+                    if selected_time in e["timestamp"]
+                )
                 analysis = selected.get("analysis", {})
 
                 col_left, col_right = st.columns([1, 1])
+
                 with col_left:
                     st.markdown(f"""
                         <div class='outerbox'>
@@ -150,18 +163,21 @@ with tabs[1]:
                     """, unsafe_allow_html=True)
 
                 with col_right:
-                    st.markdown(f"""
+                    st.markdown("""
                         <div class='outerbox'>
                             <div class='readbox-container'>
                                 <div class='readbox-title'>Emotions</div>
-                                <div class='readbox'><ul>{''.join(f"<li>{e}</li>" for e in analysis.get("emotions", []))}</ul></div>
+                                <div class='readbox'><ul>{}</ul></div>
                             </div>
                             <div class='readbox-container'>
                                 <div class='readbox-title'>Themes</div>
-                                <div class='readbox'><ul>{''.join(f"<li>{t}</li>" for t in analysis.get("themes", []))}</ul></div>
+                                <div class='readbox'><ul>{}</ul></div>
                             </div>
                         </div>
-                    """, unsafe_allow_html=True)
+                    """.format(
+                        ''.join(f"<li>{x}</li>" for x in analysis.get("emotions", [])),
+                        ''.join(f"<li>{x}</li>" for x in analysis.get("themes", []))
+                    ), unsafe_allow_html=True)
             else:
                 st.info("No entries found for selected date.")
         else:
@@ -169,7 +185,6 @@ with tabs[1]:
     else:
         st.info("No database files found in /data.")
 
-# -------------------- 📊 VISUAL INSIGHTS --------------------
 # -------------------- 📊 VISUAL INSIGHTS --------------------
 with tabs[2]:
     st.header("Visual Insights")
@@ -183,28 +198,14 @@ with tabs[2]:
 
         if entries:
             df = pd.DataFrame(entries)
+            if "timestamp" in df.columns:
+                df["date"] = pd.to_datetime(df["timestamp"]).dt.date
 
-            # Flatten 'analysis' dictionary into columns
-            if "analysis" in df.columns:
-                analysis_df = pd.json_normalize(df["analysis"])
-                df = pd.concat([df.drop(columns=["analysis"]), analysis_df], axis=1)
-
-            # Check for required column
-            if "emotions" not in df.columns:
-                st.error("❌ 'emotions' column missing. Your data might not be analyzed yet.")
-                st.stop()
-
-            # Format and parse dates
-            df["date"] = pd.to_datetime(df["timestamp"]).dt.date
-            df["month"] = pd.to_datetime(df["timestamp"]).dt.to_period("M").dt.to_timestamp()
-            df["date_str"] = df["date"].apply(lambda d: d.strftime("%d-%b-%Y"))
-
-            st.subheader("📈 Emotion Timeline (Monthly Frequency)")
+            st.subheader("📈 Emotion Timeline")
             st.pyplot(plot_emotion_timeline(df))
 
             st.subheader("📊 Theme Frequency")
             st.pyplot(plot_theme_frequency(df))
-
         else:
             st.info("No data to visualize.")
     else:
