@@ -1,6 +1,3 @@
-# ui/streamlit_app.py
-# AI Journal App – Streamlit UI
-
 import sys
 import os
 
@@ -13,14 +10,20 @@ from datetime import datetime
 import pandas as pd
 from app.analyzer import analyze_entry
 from app.storage import save_entry
-from app.visualizations import plot_emotion_timeline, plot_theme_frequency
+from app.visualizations import plot_emotion_timeline, plot_theme_frequency, plot_theme_wordcloud
+
 
 st.set_page_config(page_title="AI Journal", layout="centered")
 st.title("📝 AI-Powered Journal")
 
-# --------- STYLING ---------
+# --------- DARK THEME STYLING ---------
 st.markdown("""
     <style>
+    html, body, [class*="css"] {
+        background-color: #1e1f23;
+        color: #f5f5f5;
+        font-family: 'Segoe UI', sans-serif;
+    }
     .outerbox {
         background-color: #2c2f35;
         padding: 1.5rem;
@@ -49,7 +52,7 @@ st.markdown("""
         padding: 0 0.6rem;
         font-weight: 600;
         font-size: 0.93rem;
-        color: white;
+        color: #f5f5f5;
         z-index: 10;
         border-left: 1px solid #444;
         border-right: 1px solid #444;
@@ -77,6 +80,9 @@ st.markdown("""
     li {
         margin-bottom: 0.2rem;
         text-transform: capitalize;
+    }
+    label, .stTextInput label, .stTextArea label, .stDateInput label, .stTimeInput label {
+        color: #f5f5f5 !important;
     }
     .stDateInput input {
         position: relative;
@@ -123,7 +129,6 @@ with tabs[1]:
         if entries:
             entries.sort(key=lambda x: x["timestamp"], reverse=True)
 
-            # Extract available dates only
             available_dates = sorted(list(set([e["timestamp"].split("T")[0] for e in entries])))
             available_dates_dt = [datetime.strptime(d, "%Y-%m-%d").date() for d in available_dates]
             selected_date = st.selectbox("Choose a date with an entry:", available_dates_dt)
@@ -201,11 +206,18 @@ with tabs[2]:
             if "timestamp" in df.columns:
                 df["date"] = pd.to_datetime(df["timestamp"]).dt.date
 
-            st.subheader("📈 Emotion Timeline")
-            st.pyplot(plot_emotion_timeline(df))
+            st.subheader("📈 Emotion Timeline (Top 5)")
+            fig = plot_emotion_timeline(df, top_n=5, return_fig=True)
+            st.pyplot(fig)
 
-            st.subheader("📊 Theme Frequency")
-            st.pyplot(plot_theme_frequency(df))
+            #st.subheader("📊 Theme Frequency (Top 25)")
+            #fig = plot_theme_frequency(df, top_n=25, return_fig=True)
+            #st.pyplot(fig)
+
+            st.subheader("🎨 Theme Word Cloud")
+            fig = plot_theme_wordcloud(df, return_fig=True)
+            st.pyplot(fig)
+
         else:
             st.info("No data to visualize.")
     else:
