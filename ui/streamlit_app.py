@@ -5,13 +5,17 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import json
+import random
+
 import streamlit as st
 from datetime import datetime
 import pandas as pd
 from app.analyzer import analyze_entry
 from app.storage import save_entry
-from app.visualizations import plot_emotion_timeline, plot_theme_frequency, plot_theme_wordcloud
-
+from app.visualizations import (
+    plot_emotion_area,
+    plot_theme_wordcloud
+)
 
 st.set_page_config(page_title="AI Journal", layout="centered")
 st.title("📝 AI-Powered Journal")
@@ -93,132 +97,115 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["✍️ Add Entry", "📖 Browse Entries", "📊 Visual Insights"])
+tabs = st.tabs(["✍️ Add Entry", "📖 Browse Entries", "📊 Visual Insights", "💬 Journal Assistant"])
 
-# -------------------- ✍️ ADD ENTRY --------------------
-with tabs[0]:
-    st.header("New Journal Entry")
+# -------------------- 💬 JOURNAL ASSISTANT --------------------
+with tabs[3]:
+    st.markdown("""
+        <style>
+        .chat-box {
+            height: 70vh;
+            overflow-y: auto;
+            padding: 1rem;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            border: 1px solid #444;
+            margin-bottom: 80px;
+        }
+        .chat-message {
+            padding: 0.5rem;
+            margin-bottom: 0.75rem;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        .chat-message.user {
+            background-color: #333;
+            color: #f5f5f5;
+            align-self: flex-end;
+            text-align: right;
+        }
+        .chat-message.bot {
+            background-color: #2c2f35;
+            color: #f5f5f5;
+            align-self: flex-start;
+        }
+        .chat-row {
+            display: flex;
+            flex-direction: column;
+        }
+        .input-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100vw;
+            background-color: #181825;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid #333;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            z-index: 100;
+        }
+        .chat-input {
+            flex-grow: 1;
+            padding: 0.6rem 1rem;
+            font-size: 1rem;
+            border-radius: 20px;
+            border: none;
+            background-color: #2c2f35;
+            color: white;
+        }
+        .send-btn {
+            background-color: transparent;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    date = st.date_input("Date", value=datetime.now().date())
-    time = st.time_input("Time", value=datetime.now().time())
-    text = st.text_area("What’s on your mind?", height=180)
+    st.title("🧠 Journal Chatbot")
 
-    if st.button("Analyze & Save"):
-        if not text.strip():
-            st.warning("Please write something before submitting.")
-        else:
-            with st.spinner("Analyzing with AI..."):
-                result = analyze_entry(text)
-                result["timestamp"] = datetime.combine(date, time).isoformat()
-                result["text"] = text
-                save_entry(text, result)
-            st.success("✅ Entry saved and analyzed!")
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
 
-# -------------------- 📖 BROWSE ENTRIES --------------------
-with tabs[1]:
-    st.header("Your Journal History")
+    # Display chat history
+    chat_html = '<div class="chat-box chat-row">'
+    for m in st.session_state.chat_messages:
+        role_class = "user" if m["role"] == "user" else "bot"
+        chat_html += f'<div class="chat-message {role_class}">{m["content"]}</div>'
+    chat_html += '<div id="chat-end"></div></div>'
+    st.markdown(chat_html, unsafe_allow_html=True)
 
-    files = [f for f in os.listdir("data") if f.endswith(".jsonl")]
-    file_choice = st.selectbox("Select a database:", files) if files else None
+    # Auto-scroll to bottom
+    st.markdown("""
+        <script>
+        var chatContainer = document.querySelector(".chat-box");
+        if (chatContainer) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        </script>
+    """, unsafe_allow_html=True)
 
-    if file_choice:
-        path = os.path.join("data", file_choice)
-        with open(path, "r") as f:
-            entries = [json.loads(line.strip()) for line in f.readlines()]
+    # Input + send inside fixed bottom
+    st.markdown('<div class="input-container">', unsafe_allow_html=True)
 
-        if entries:
-            entries.sort(key=lambda x: x["timestamp"], reverse=True)
+    with st.form("chat_form", clear_on_submit=True):
+        cols = st.columns([10, 1])
+        user_input = cols[0].text_input(
+            "Your message", key="new_chat_input", label_visibility="collapsed", placeholder="Type a message..."
+        )
+        submitted = cols[1].form_submit_button("➤")
 
-            available_dates = sorted(list(set([e["timestamp"].split("T")[0] for e in entries])))
-            available_dates_dt = [datetime.strptime(d, "%Y-%m-%d").date() for d in available_dates]
-            selected_date = st.selectbox("Choose a date with an entry:", available_dates_dt)
+        if submitted and user_input.strip():
+            st.session_state.chat_messages.append({"role": "user", "content": user_input.strip()})
+            response = random.choice([
+                "That's a cool thought!",
+                "Interesting, tell me more.",
+                "Hmm, I'm thinking about it.",
+                "How does that make you feel?"
+            ])
+            st.session_state.chat_messages.append({"role": "bot", "content": response})
 
-            matching_entries = [e for e in entries if e["timestamp"].startswith(selected_date.isoformat())]
-            time_options = []
-            for e in matching_entries:
-                try:
-                    dt = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%S.%f")
-                except ValueError:
-                    dt = datetime.strptime(e["timestamp"], "%Y-%m-%dT%H:%M:%S")
-                time_options.append(dt.strftime("%H:%M"))
-
-            selected_time = st.selectbox("Select time:", time_options) if time_options else None
-
-            if selected_time:
-                selected = next(
-                    e for e in matching_entries
-                    if selected_time in e["timestamp"]
-                )
-                analysis = selected.get("analysis", {})
-
-                col_left, col_right = st.columns([1, 1])
-
-                with col_left:
-                    st.markdown(f"""
-                        <div class='outerbox'>
-                            <div class='readbox-container'>
-                                <div class='readbox-title'>Journal Text</div>
-                                <div class='readbox'>{selected.get("text", "—")}</div>
-                            </div>
-                            <div class='readbox-container'>
-                                <div class='readbox-title'>Summary</div>
-                                <div class='readbox'><ul style="list-style:none;padding-left:0;"><li>{analysis.get("summary", "—")}</li></ul></div>
-                            </div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-                with col_right:
-                    st.markdown("""
-                        <div class='outerbox'>
-                            <div class='readbox-container'>
-                                <div class='readbox-title'>Emotions</div>
-                                <div class='readbox'><ul>{}</ul></div>
-                            </div>
-                            <div class='readbox-container'>
-                                <div class='readbox-title'>Themes</div>
-                                <div class='readbox'><ul>{}</ul></div>
-                            </div>
-                        </div>
-                    """.format(
-                        ''.join(f"<li>{x}</li>" for x in analysis.get("emotions", [])),
-                        ''.join(f"<li>{x}</li>" for x in analysis.get("themes", []))
-                    ), unsafe_allow_html=True)
-            else:
-                st.info("No entries found for selected date.")
-        else:
-            st.info("No entries in selected file.")
-    else:
-        st.info("No database files found in /data.")
-
-# -------------------- 📊 VISUAL INSIGHTS --------------------
-with tabs[2]:
-    st.header("Visual Insights")
-    files = [f for f in os.listdir("data") if f.endswith(".jsonl")]
-    file_choice = st.selectbox("Select a database for visualization:", files, key="viz") if files else None
-
-    if file_choice:
-        path = os.path.join("data", file_choice)
-        with open(path, "r") as f:
-            entries = [json.loads(line.strip()) for line in f.readlines()]
-
-        if entries:
-            df = pd.DataFrame(entries)
-            if "timestamp" in df.columns:
-                df["date"] = pd.to_datetime(df["timestamp"]).dt.date
-
-            st.subheader("📈 Emotion Timeline (Top 5)")
-            fig = plot_emotion_timeline(df, top_n=5, return_fig=True)
-            st.pyplot(fig)
-
-            #st.subheader("📊 Theme Frequency (Top 25)")
-            #fig = plot_theme_frequency(df, top_n=25, return_fig=True)
-            #st.pyplot(fig)
-
-            st.subheader("🎨 Theme Word Cloud")
-            fig = plot_theme_wordcloud(df, return_fig=True)
-            st.pyplot(fig)
-
-        else:
-            st.info("No data to visualize.")
-    else:
-        st.info("No database files found.")
+    st.markdown('</div>', unsafe_allow_html=True)

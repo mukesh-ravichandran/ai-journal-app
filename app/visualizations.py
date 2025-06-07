@@ -1,95 +1,152 @@
-import pandas as pd
+from collections import Counter
 import matplotlib.pyplot as plt
-import streamlit as st
-from wordcloud import WordCloud
+import pandas as pd
+import seaborn as sns
+from wordcloud import WordCloud, STOPWORDS
+from PIL import Image, ImageFilter
+import numpy as np
+import os
+
+# ---------- MASK HELPERS ----------
+def soften_mask_edges(mask_path, blur_radius=10):
+    if os.path.exists(mask_path):
+        mask = Image.open(mask_path).convert("L")
+        blurred = mask.filter(ImageFilter.GaussianBlur(blur_radius))
+        return np.array(blurred)
+    return None
 
 
-def normalize_list_column(df, col):
-    df[col] = df[col].apply(
-        lambda x: [v.strip().lower() for v in x] if isinstance(x, list) else []
+# ---------- STACKED AREA CHART ----------
+def plot_emotion_area(df, emotion_col="analysis", top_n=5, selected=None):
+    df["month"] = pd.to_datetime(df["timestamp"]).dt.to_period("M").dt.to_timestamp()
+
+    emotion_counts = {}
+    for _, row in df.iterrows():
+        if isinstance(row[emotion_col], dict) and "emotions" in row[emotion_col]:
+            for emotion in row[emotion_col]["emotions"]:
+                month = row["month"]
+                emotion_counts[(month, emotion)] = emotion_counts.get((month, emotion), 0) + 1
+
+    data = [
+        {"month": month, "emotion": emotion, "count": count}
+        for (month, emotion), count in emotion_counts.items()
+    ]
+    timeline_df = pd.DataFrame(data)
+
+    if selected:
+        top_emotions = selected
+    else:
+        top_emotions = Counter(timeline_df["emotion"]).most_common(top_n)
+        top_emotions = [e[0] for e in top_emotions]
+
+    timeline_df = timeline_df[timeline_df["emotion"].isin(top_emotions)]
+    pivot_df = timeline_df.pivot(index="month", columns="emotion", values="count").sort_index().fillna(0)
+
+    fig, ax = plt.subplots(figsize=(10, 5), facecolor='none')
+    ax.set_facecolor('none')
+
+    colors = plt.cm.tab10.colors[:len(pivot_df.columns)]
+    pivot_df.plot.area(ax=ax, color=colors, linewidth=0, legend=True)
+
+ 
+
+    ax.set_title("Emotion Trends – Stacked Area", color='white', fontsize=16, pad=15)
+    ax.set_xlabel("Month", color='white')
+    ax.set_ylabel("Frequency", color='white')
+    ax.tick_params(colors='white')
+
+    for spine in ax.spines.values():
+        spine.set_color('white')
+
+    ax.set_xticks(pivot_df.index)
+    ax.set_xticklabels([d.strftime("%b %Y") for d in pivot_df.index], rotation=45, ha='right', color='white')
+    fig.tight_layout()
+    return fig
+
+
+# ---------- EMOTION HEATMAP ----------
+def plot_emotion_heatmap(df, emotion_col="analysis", top_n=5, selected=None):
+    df["month"] = pd.to_datetime(df["timestamp"]).dt.to_period("M").dt.to_timestamp()
+
+    emotion_counts = {}
+    for _, row in df.iterrows():
+        if isinstance(row[emotion_col], dict) and "emotions" in row[emotion_col]:
+            for emotion in row[emotion_col]["emotions"]:
+                month = row["month"]
+                emotion_counts[(month, emotion)] = emotion_counts.get((month, emotion), 0) + 1
+
+    data = [
+        {"month": month, "emotion": emotion, "count": count}
+        for (month, emotion), count in emotion_counts.items()
+    ]
+    timeline_df = pd.DataFrame(data)
+
+    if selected:
+        top_emotions = selected
+    else:
+        top_emotions = Counter(timeline_df["emotion"]).most_common(top_n)
+        top_emotions = [e[0] for e in top_emotions]
+
+    timeline_df = timeline_df[timeline_df["emotion"].isin(top_emotions)]
+    pivot_df = timeline_df.pivot(index="emotion", columns="month", values="count").fillna(0)
+
+    fig, ax = plt.subplots(figsize=(10, 4), facecolor='none')
+    ax.set_facecolor('none')
+
+    sns.heatmap(
+        pivot_df,
+        ax=ax,
+        cmap="coolwarm",
+        linewidths=0.5,
+        linecolor="#444",
+        cbar=True,
+        xticklabels=[d.strftime("%b %Y") for d in pivot_df.columns],
+        yticklabels=True
     )
-    return df
+
+    ax.tick_params(colors='white')
+    ax.set_title("Emotion Frequency Heatmap", color='white', fontsize=14, pad=12)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    fig.tight_layout()
+    return fig
 
 
-def plot_emotion_timeline(df, top_n=5, return_fig=False):
-    if "analysis" in df.columns:
-        df["emotions"] = df["analysis"].apply(lambda x: x.get("emotions", []) if isinstance(x, dict) else [])
+# ---------- THEME WORD CLOUD ----------
+def plot_theme_wordcloud(df, theme_col="analysis", key="themes", wc=20):
+    bg_color = None
 
-    if "emotions" not in df.columns:
-        st.warning("No 'emotions' column found in this dataset.")
-        return
-
-    df["emotions"] = df["emotions"].apply(
-        lambda x: [e.strip().lower() for e in x] if isinstance(x, list) else []
-    )
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df_exploded = df[["timestamp", "emotions"]].explode("emotions")
-
-    # Group by month
-    df_exploded["month"] = df_exploded["timestamp"].dt.to_period("M").dt.to_timestamp()
-
-    # Filter top N emotions
-    top_emotions = df_exploded["emotions"].value_counts().nlargest(top_n).index
-    df_exploded = df_exploded[df_exploded["emotions"].isin(top_emotions)]
-
-    emotion_counts = df_exploded.groupby(["month", "emotions"]).size().unstack(fill_value=0)
-
-    fig, ax = plt.subplots(figsize=(12, 6))
-    emotion_counts.plot(ax=ax)
-    ax.set_title(f"Emotion Timeline (Top {top_n}, Monthly)")
-    ax.set_xlabel("Month")
-    ax.set_ylabel("Count")
-    ax.legend(title="Emotions", bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-
-    return fig if return_fig else plt.show()
-
-
-
-
-def plot_theme_frequency(df, top_n=None, return_fig=False):
-    if "analysis" in df.columns:
-        df["themes"] = df["analysis"].apply(lambda x: x.get("themes", []) if isinstance(x, dict) else [])
-
-    if "themes" not in df.columns:
-        st.warning("No 'themes' column found in this dataset.")
-        return
-
-    df = normalize_list_column(df, "themes")
-    df_exploded = df[["themes"]].explode("themes")
-    theme_counts = df_exploded["themes"].value_counts()
-
-    if top_n:
-        theme_counts = theme_counts.nlargest(top_n)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    theme_counts.plot(kind="bar", ax=ax)
-    ax.set_title("Theme Frequency")
-    ax.set_ylabel("Count")
-    ax.set_xlabel("Theme")
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
-    plt.tight_layout()
-
-    return fig if return_fig else plt.show()
-
-
-def plot_theme_wordcloud(df, return_fig=False):
-    if "analysis" in df.columns:
-        df["themes"] = df["analysis"].apply(lambda x: x.get("themes", []) if isinstance(x, dict) else [])
-
-    if "themes" not in df.columns:
-        st.warning("No 'themes' column found in this dataset.")
-        return
-
-    df = normalize_list_column(df, "themes")
-    all_themes = df["themes"].explode().dropna()
+    all_themes = []
+    for row in df[theme_col]:
+        if isinstance(row, dict) and key in row:
+            all_themes.extend(row[key])
+    if not all_themes:
+        all_themes = ["no themes"]
     text = " ".join(all_themes)
 
-    wc = WordCloud(width=800, height=400, background_color="white", colormap="Dark2").generate(text)
+    def soften_mask_edges(mask_path, blur_radius=4):
+        mask = Image.open(mask_path).convert("L")
+        blurred = mask.filter(ImageFilter.GaussianBlur(blur_radius))
+        return np.array(blurred)
 
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wc, interpolation="bilinear")
-    ax.axis("off")
-    plt.tight_layout()
+    mask_path = os.path.join("data", "Heart_Mask.png")
+    mask = soften_mask_edges(mask_path) if os.path.exists(mask_path) else None
 
-    return fig if return_fig else plt.show()
+    wordcloud = WordCloud(
+        background_color=bg_color,
+        mode="RGBA",
+        max_words=wc,
+        stopwords=set(STOPWORDS),
+        mask=mask,
+        contour_color=None,
+        contour_width=0,
+        width=800,
+        height=800,
+        colormap="coolwarm"
+    ).generate(text)
+
+    fig = plt.figure(figsize=(6, 6), facecolor=bg_color)
+    plt.imshow(wordcloud, interpolation="bilinear")
+    plt.axis("off")
+    plt.tight_layout(pad=0)
+    return fig
