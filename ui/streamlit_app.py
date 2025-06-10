@@ -10,6 +10,7 @@ import random
 import streamlit as st
 from datetime import datetime
 import pandas as pd
+from app.llm import get_deepseek_response
 from app.analyzer import analyze_entry
 from app.storage import save_entry
 from app.visualizations import (
@@ -100,6 +101,8 @@ st.markdown("""
 tabs = st.tabs(["✍️ Add Entry", "📖 Browse Entries", "📊 Visual Insights", "💬 Journal Assistant"])
 
 # -------------------- 💬 JOURNAL ASSISTANT --------------------
+from app.llm import get_deepseek_response  # Make sure you added this earlier
+
 with tabs[3]:
     st.markdown("""
         <style>
@@ -170,7 +173,25 @@ with tabs[3]:
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
-    # Display chat history
+    # --- INPUT FORM FIRST ---
+    user_input = ""
+    with st.form("chat_form", clear_on_submit=True):
+        cols = st.columns([10, 1])
+        user_input = cols[0].text_input(
+            "Your message",
+            key="new_chat_input",
+            label_visibility="collapsed",
+            placeholder="Type a message..."
+        )
+        submitted = cols[1].form_submit_button("➤")
+
+    # --- PROCESS INPUT using LLM ---
+    if submitted and user_input.strip():
+        st.session_state.chat_messages.append({"role": "user", "content": user_input.strip()})
+        llm_reply = get_deepseek_response(user_input.strip())
+        st.session_state.chat_messages.append({"role": "bot", "content": llm_reply})
+
+    # --- CHAT DISPLAY ---
     chat_html = '<div class="chat-box chat-row">'
     for m in st.session_state.chat_messages:
         role_class = "user" if m["role"] == "user" else "bot"
@@ -178,7 +199,7 @@ with tabs[3]:
     chat_html += '<div id="chat-end"></div></div>'
     st.markdown(chat_html, unsafe_allow_html=True)
 
-    # Auto-scroll to bottom
+    # --- AUTO-SCROLL TO BOTTOM ---
     st.markdown("""
         <script>
         var chatContainer = document.querySelector(".chat-box");
@@ -188,24 +209,6 @@ with tabs[3]:
         </script>
     """, unsafe_allow_html=True)
 
-    # Input + send inside fixed bottom
+    # --- Fixed input container dummy tag ---
     st.markdown('<div class="input-container">', unsafe_allow_html=True)
-
-    with st.form("chat_form", clear_on_submit=True):
-        cols = st.columns([10, 1])
-        user_input = cols[0].text_input(
-            "Your message", key="new_chat_input", label_visibility="collapsed", placeholder="Type a message..."
-        )
-        submitted = cols[1].form_submit_button("➤")
-
-        if submitted and user_input.strip():
-            st.session_state.chat_messages.append({"role": "user", "content": user_input.strip()})
-            response = random.choice([
-                "That's a cool thought!",
-                "Interesting, tell me more.",
-                "Hmm, I'm thinking about it.",
-                "How does that make you feel?"
-            ])
-            st.session_state.chat_messages.append({"role": "bot", "content": response})
-
     st.markdown('</div>', unsafe_allow_html=True)
